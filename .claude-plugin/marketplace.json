@@ -1,0 +1,15 @@
+{
+  "name": "avogiatzis-plugins",
+  "description": "Personal Claude Code plugins by avogiatzis",
+  "owner": {
+    "name": "avogiatzis"
+  },
+  "plugins": [
+    {
+      "name": "team-workflow",
+      "description": "Team-based development workflow with intelligent project discovery, agent teams, tasker integration, and review enforcement. Inspired by BMAD-METHOD.",
+      "source": "./plugins/team-workflow",
+      "category": "development"
+    }
+  ]
+}
