@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Read tool input JSON from stdin
+INPUT="$(cat)"
+
+# Extract the command field
+COMMAND="$(printf '%s' "$INPUT" | sed -n 's/.*"command"\s*:\s*"\(.*\)".*/\1/p' | head -1)"
+
+# If not a PR creation command, pass through
+if [[ "$COMMAND" != *"gh pr create"* ]]; then
+  printf '{}'
+  exit 0
+fi
+
+# Check for artifacts directory
+ARTIFACTS_DIR="_architecture/artifacts"
+if [[ ! -d "$ARTIFACTS_DIR" ]]; then
+  # Not using team workflow — pass through
+  printf '{}'
+  exit 0
+fi
+
+# Find most recent complexity.txt
+COMPLEXITY="simple"
+LATEST_COMPLEXITY=""
+if compgen -G "$ARTIFACTS_DIR/*/complexity.txt" > /dev/null 2>&1; then
+  LATEST_COMPLEXITY="$(ls -t $ARTIFACTS_DIR/*/complexity.txt 2>/dev/null | head -1)"
+fi
+
+if [[ -n "$LATEST_COMPLEXITY" && -f "$LATEST_COMPLEXITY" ]]; then
+  RAW="$(cat "$LATEST_COMPLEXITY" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+  case "$RAW" in
+    trivial|simple|standard|complex) COMPLEXITY="$RAW" ;;
+    *) COMPLEXITY="simple" ;;
+  esac
+fi
+
+# If trivial, always pass through
+if [[ "$COMPLEXITY" == "trivial" ]]; then
+  printf '{}'
+  exit 0
+fi
+
+# Check for review evidence
+HAS_REVIEW=false
+if compgen -G "$ARTIFACTS_DIR/*/review-report-*.md" > /dev/null 2>&1; then
+  HAS_REVIEW=true
+fi
+
+# If review exists, pass through
+if [[ "$HAS_REVIEW" == "true" ]]; then
+  printf '{}'
+  exit 0
+fi
+
+# No review found — enforce based on complexity
+if [[ "$COMPLEXITY" == "simple" ]]; then
+  # Soft reminder
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"REMINDER: No review report found for this task. You MUST run the code reviewer before creating a PR, or confirm the user explicitly asked to skip review."}}'
+  exit 0
+else
+  # Standard or complex — hard block
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"BLOCKED: Review is required for Standard/Complex tasks. Run /team-review-cycle before creating a PR. The user must explicitly override this gate."}}'
+  exit 1
+fi
