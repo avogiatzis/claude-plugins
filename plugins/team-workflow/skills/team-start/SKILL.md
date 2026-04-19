@@ -46,12 +46,12 @@ _First session. No prior context._
 
 Check if `_architecture/agents/` exists and contains agent definition files:
 - If missing or empty: invoke `/team-discover` to scan the project and generate domain expert agent definitions
-- If exists: check `_architecture/agents/.fingerprint` for staleness
-  - Recompute the directory structure hash (sorted service indicator file paths)
-  - If hash differs from stored fingerprint: invoke `/team-discover` to regenerate
-  - If hash matches: proceed with cached agents
+- If exists: check `_architecture/agents/.fingerprint` for staleness via **two independent conditions** — trigger `/team-discover --force` if **either** fires:
+  1. **Structural staleness:** recompute the directory structure hash (sorted service indicator file paths). If hash differs from the one stored inside `.fingerprint`, regenerate — the repo has grown/shrunk services since last discovery.
+  2. **Temporal staleness (NEW):** check the `.fingerprint` file's modification time. If it is more than **3 days old** (wall clock, not commits), regenerate — framework best practices and service internals drift independently of directory structure, so cached agent definitions go stale even when the hash still matches.
+  - If neither condition fires: proceed with cached agents.
 
-This step ensures domain expert agents are available before team spawning. The discovery engine will research framework best practices and generate rich agent definitions automatically.
+This step ensures domain expert agents are available before team spawning and prevents stale agent definitions from persisting across weeks of project evolution. The discovery engine will research framework best practices and generate rich agent definitions automatically.
 
 If `/team-discover` is not available (plugin not fully loaded), skip this step and proceed with manual agent selection.
 

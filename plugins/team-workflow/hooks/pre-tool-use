@@ -56,11 +56,13 @@ fi
 
 # No review found — enforce based on complexity
 if [[ "$COMPLEXITY" == "simple" ]]; then
-  # Soft reminder
+  # Soft reminder — additionalContext is informational and does NOT deny the tool call
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"REMINDER: No review report found for this task. You MUST run the code reviewer before creating a PR, or confirm the user explicitly asked to skip review."}}'
   exit 0
 else
-  # Standard or complex — hard block
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"BLOCKED: Review is required for Standard/Complex tasks. Run /team-review-cycle before creating a PR. The user must explicitly override this gate."}}'
-  exit 1
+  # Standard or complex — hard deny via permissionDecision
+  # (exit 1 is a non-blocking hook-runtime error; additionalContext alone never denies.
+  #  The documented deny path is permissionDecision="deny" inside hookSpecificOutput with exit 0.)
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Review is required for Standard/Complex tasks but no review-report-*.md was found under _architecture/artifacts/*/. Run /team-review-cycle before creating the PR. If this is intentional, the user can override via the permission prompt."}}'
+  exit 0
 fi
