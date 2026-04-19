@@ -36,8 +36,16 @@ STEP 6: Send shutdown requests to all teammates. Wait for shutdown confirmations
 STEP 7: Call TeamDelete to clean up the team.
 
 STEP 8: Stop AI time tracking and update tasker tasks (if tasker MCP is available).
-- Call `mcp__tasker__tasker_ai_stop` with a summary of what was accomplished this session
-- For any tasker tasks that were worked on this session:
+
+**Close ALL active AI sessions (not just the current one).** `tasker_ai_stop` closes one active session per call (FIFO — oldest first), so sessions left open by prior mid-session `team-start` or orchestration glitches accumulate bogus duration otherwise. Follow this loop:
+
+1. Call `mcp__tasker__tasker_time_list` and count entries where the `end` field is absent — these are active sessions.
+2. For each active session (cap the loop at 10 iterations as a safety bound), call `mcp__tasker__tasker_ai_stop` with a description that includes: the current task's outcome summary, plus — if the entry's `taskId` differs from the current task — a note that it is being force-closed because it was a leaked prior session.
+3. After the loop, call `mcp__tasker__tasker_time_list` once more and verify no entries are missing `end`. If any remain, report the leak to the user explicitly.
+4. Report the total count of sessions closed (usually 1; more indicates prior leakage that has now been cleaned up).
+
+Then update task state:
+- For any tasker tasks worked on this session:
   - If completed: mark as `done` via `mcp__tasker__tasker_update` with notes summarizing what was done (PR link, key changes, review status)
   - If still in progress: update notes with current status and what remains
 - Call `mcp__tasker__tasker_hours` with period "today" to show time tracked
