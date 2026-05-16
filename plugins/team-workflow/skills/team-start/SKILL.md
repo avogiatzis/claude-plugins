@@ -33,12 +33,7 @@ Platform-wide rules that all services/modules must follow.
 _No decisions yet. The architect will add decisions here as they're made._
 ```
 
-**`_architecture/NEXT-SESSION.md`**:
-```markdown
-# Next Session Brief
-
-_First session. No prior context._
-```
+_(NEXT-SESSION.md is no longer scaffolded — handoff is now per-tasker via `_architecture/artifacts/<id>/HANDOFF.md`. See spec: `_architecture/specs/2026-05-16-per-tasker-session-handoff-design.md`.)_
 
 1b. Create `_architecture/decisions/`, `_architecture/escalations/`, and `_architecture/propagations/` directories.
 
@@ -73,10 +68,45 @@ Once a task is identified:
 2. Update the tasker task status to `in-progress` via `mcp__tasker__tasker_update`
 3. **Start AI time tracking immediately:** call `mcp__tasker__tasker_ai_start` with the task ID and the task title. Time starts NOW — all research, exploration, and planning counts as work.
 
+## STEP 2.5: Resume vs new-worktree decision + stale-handoff guard + sibling-contention scan
+
+Now that a task is identified (in STEP 2) and its status flipped to `in-progress`, check for an existing session on this tasker.
+
+2.5a. Read the task fields via `mcp__tasker__tasker_get`. Look at `currentWorktree`, `currentBranch`, `handoffPath`, `lastSessionEndedAt`, `lastSessionTerminal`.
+
+2.5b. **Resume-vs-new decision.** If `currentWorktree` is set AND the path exists on disk:
+- Use AskUserQuestion: "Tasker #<id> has an active session at `<currentWorktree>` on branch `<currentBranch>` (last touched <lastSessionEndedAt> by <lastSessionTerminal>). Resume / new-worktree / abort?"
+- **Resume:** `cd <currentWorktree>`. Skip to STEP 2.5d.
+- **New-worktree:** create a fresh worktree (use `superpowers:using-git-worktrees`), then call `mcp__tasker__tasker_update` setting `currentWorktree`, `currentBranch` to the new values and `handoffPath: null` (will be re-set at next /team-stop or /team-checkpoint). Skip to STEP 3.
+- **Abort:** stop the skill cleanly. Do NOT call `tasker_ai_start`.
+
+2.5c. **No existing session.** If `currentWorktree` is NOT set OR the path does not exist on disk:
+- Create a fresh worktree per `superpowers:using-git-worktrees`.
+- Call `mcp__tasker__tasker_update` setting `currentWorktree: <new abs path>`, `currentBranch: <branch name>`.
+
+2.5d. **Stale-handoff guard** (7-day threshold; configurable via `.tasker/config.json` `staleHandoffDays`, default 7):
+- If `lastSessionEndedAt` is set AND is older than the threshold from now:
+  - Read `<handoffPath>` fully if it exists.
+  - Print the entire HANDOFF contents to the user, then use AskUserQuestion: "Handoff is <N> days old. I've read it. Proceed?"
+  - On "no" or no response, abort the skill cleanly.
+- If `lastSessionEndedAt` is within the threshold OR not set:
+  - If `handoffPath` is set, read it silently (the Claude instance now has it in context for the rest of the session).
+
+2.5e. **Sibling-worktree contention scan:**
+- Call `mcp__tasker__tasker_list` (status: "in-progress").
+- For each task != the one being started AND with a non-null `handoffPath`:
+  - Read the file; extract the `## Files I'm touching` section (lines between that heading and the next `##` heading).
+  - Collect all listed file paths.
+- Compare the union of those paths to the planned scope of THIS session (from the task's `notes`, the linked `plan.md`, or — if neither exists — ask the user "What files do you expect to touch this session?").
+- If overlap exists:
+  - Print a warning block: "⚠ Sibling session on tasker #<sib-id> in `<sib-worktree>` is also editing: <overlapping files>". One warning block per colliding sibling.
+  - Use AskUserQuestion: "Sibling-worktree contention detected. Proceed / coordinate-first / abort?"
+  - On "abort", stop the skill cleanly.
+- If no overlap: continue silently.
+
 ## STEP 3: Read state files
 
 Read these files now:
-- `_architecture/NEXT-SESSION.md`
 - `_architecture/PLATFORM-STATE.md`
 - `_architecture/CROSS-CUTTING-DECISIONS.md`
 - All files in `_architecture/escalations/`
