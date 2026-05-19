@@ -1,0 +1,8 @@
+{
+  "name": "researching-with-agent-teams",
+  "version": "1.0.0",
+  "description": "Skill that enforces a four-role research workflow (parallel research → adversarial review → validation → synthesis) for any investigation that informs a real decision.",
+  "author": {
+    "name": "avogiatzis"
+  }
+}

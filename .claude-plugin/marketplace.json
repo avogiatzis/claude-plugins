@@ -10,6 +10,12 @@
       "description": "Team-based development workflow with intelligent project discovery, agent teams, tasker integration, and review enforcement. Inspired by BMAD-METHOD.",
       "source": "./plugins/team-workflow",
       "category": "development"
+    },
+    {
+      "name": "researching-with-agent-teams",
+      "description": "Skill that enforces a four-role research workflow (parallel research → adversarial review → validation → synthesis) for any investigation that informs a real decision.",
+      "source": "./plugins/researching-with-agent-teams",
+      "category": "research"
     }
   ]
 }
