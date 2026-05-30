@@ -1,275 +1,159 @@
 ---
 name: team-start
-description: Start a team session — auto-pick next tasker task, research if vague, create feature branch, spawn teammates, implement, then review cycle. Execute immediately without asking.
+description: Start a team session — resolve work from GitHub epics/issues (team-start <epic> | <issue#>), research if vague, create feature branch, spawn teammates, implement, then review cycle. Execute immediately without asking.
 ---
 
 Execute all of the following steps immediately. Do not ask for confirmation. Do not describe what you will do. Just do it.
+
+**Tracking is on GitHub.** Work items are GitHub Issues in `Innovation-Philosophy/Lisi-Core`, organised on Project #5 (https://github.com/orgs/Innovation-Philosophy/projects/5). Epics are tracking issues (label `epic`) with their tasks attached as native sub-issues. Tasker is RETIRED — do not call any `mcp__tasker__*` tool.
+
+**Canonical IDs (Project #5):**
+- Project number `5`, owner `Innovation-Philosophy`, repo `Innovation-Philosophy/Lisi-Core`, project-id `PVT_kwDOCa5KQM4BZN-K`
+- Status field `PVTSSF_lADOCa5KQM4BZN-KzhUOPWE` → Todo `f75ad846`, In Progress `47fc9ee4`, Done `98236657`
+- Priority field `PVTSSF_lADOCa5KQM4BZN-KzhUOQJ8`
 
 ## STEP 1: Bootstrap project structure (if needed)
 
 Check if `_architecture/` exists in the project root. If it does NOT exist, this is a brand new project — create the scaffolding:
 
-1a. Create `_architecture/` directory with these files:
-
-**`_architecture/PLATFORM-STATE.md`**:
-```markdown
-# Platform State
-
-**Last updated:** [now]
-
-## Services / Modules
-_No services yet. Will be populated when work begins._
-
-## Infrastructure
-_TBD_
-```
-
-**`_architecture/CROSS-CUTTING-DECISIONS.md`**:
-```markdown
-# Cross-Cutting Decisions
-
-Platform-wide rules that all services/modules must follow.
-
-_No decisions yet. The architect will add decisions here as they're made._
-```
-
-_(NEXT-SESSION.md is no longer scaffolded — handoff is now per-tasker via `_architecture/artifacts/<id>/HANDOFF.md`. See spec: `_architecture/specs/2026-05-16-per-tasker-session-handoff-design.md`.)_
+1a. Create `_architecture/` with `PLATFORM-STATE.md` (header + "No services yet") and `CROSS-CUTTING-DECISIONS.md` (header + "No decisions yet").
 
 1b. Create `_architecture/decisions/`, `_architecture/escalations/`, and `_architecture/propagations/` directories.
 
 ## STEP 1.5: Discovery gate
 
 Check if `_architecture/agents/` exists and contains agent definition files:
-- If missing or empty: invoke `/team-discover` to scan the project and generate domain expert agent definitions
-- If exists: check `_architecture/agents/.fingerprint` for staleness via **two independent conditions** — trigger `/team-discover --force` if **either** fires:
-  1. **Structural staleness:** recompute the directory structure hash (sorted service indicator file paths). If hash differs from the one stored inside `.fingerprint`, regenerate — the repo has grown/shrunk services since last discovery.
-  2. **Temporal staleness (NEW):** check the `.fingerprint` file's modification time. If it is more than **3 days old** (wall clock, not commits), regenerate — framework best practices and service internals drift independently of directory structure, so cached agent definitions go stale even when the hash still matches.
-  - If neither condition fires: proceed with cached agents.
+- If missing or empty: invoke `/team-discover` to scan the project and generate domain expert agent definitions.
+- If exists: check `_architecture/agents/.fingerprint` for staleness via two independent conditions — trigger `/team-discover --force` if either fires:
+  1. **Structural staleness:** recompute the directory-structure hash; if it differs from the stored one, regenerate.
+  2. **Temporal staleness:** if `.fingerprint` mtime is more than 3 days old, regenerate.
+  - If neither fires: proceed with cached agents.
 
-This step ensures domain expert agents are available before team spawning and prevents stale agent definitions from persisting across weeks of project evolution. The discovery engine will research framework best practices and generate rich agent definitions automatically.
+If `/team-discover` is not available, skip and proceed with manual agent selection.
 
-If `/team-discover` is not available (plugin not fully loaded), skip this step and proceed with manual agent selection.
+## STEP 2: Resolve the work item (GitHub)
 
-## STEP 2: Pick up a task and start tracking time
+Argument forms: `team-start <epic>` (epic name fuzzy / `#num`), `team-start <issue#>`, or none.
 
-Check if the user specified a tasker task (e.g., `/team-start on task #2` or context from the conversation).
+- **`<issue#>` or bare number:** target that issue directly. Go to STEP 2.5.
+- **`<epic>`:** resolve to the epic tracking issue:
+  ```
+  gh issue list --repo Innovation-Philosophy/Lisi-Core --label epic --state open --json number,title
+  ```
+  Fuzzy-match the argument against titles; on ambiguity, list matches and ask which.
+  Then read the epic's in-flight work — live-query its open sub-issues and cross-reference board Status:
+  ```
+  gh api repos/Innovation-Philosophy/Lisi-Core/issues/<epic#>/sub_issues --jq '.[] | {number,title,state}'
+  ```
+  - **If any sub-issue is In Progress:** LEAD WITH it — "In-progress: #N (last touched <age from its handoff comment>) — resume?". On yes, treat #N as the target and go to STEP 2.5 (resume path).
+  - **Else build the shortlist:** open sub-issues, ordered by Priority (high>medium>low) then issue number; take the top 5; present them; the user picks. Auto-pick only if exactly one candidate.
+- **none:** list epics with their open sub-issue counts and ask which to work on.
 
-**If a specific task was mentioned:** use that task.
+Once a target issue `<n>` is chosen, set NOTHING yet (claim happens in STEP 2.8 after the worktree exists).
 
-**If no task specified (and tasker MCP is available):** auto-pick the next one:
-1. Call `mcp__tasker__tasker_list` (status: "todo") to get all pending tasks
-2. Pick the first task (lowest ID) — this is the next task in priority order
-3. If no tasks exist, ask the user what to work on
+## STEP 2.5: Resume-vs-new worktree (derived state)
 
-**If no tasker MCP:** proceed without task tracking — user will direct the work.
+Branch convention: `feature/<n>-<slug>` (or `fix/<n>-<slug>`), slug derived from the issue title.
 
-Once a task is identified:
-1. Call `mcp__tasker__tasker_get` to read the full task details
-2. Update the tasker task status to `in-progress` via `mcp__tasker__tasker_update`
-3. **Start AI time tracking immediately:** call `mcp__tasker__tasker_ai_start` with the task ID and the task title. Time starts NOW — all research, exploration, and planning counts as work.
+- Look for an existing worktree on that branch: `git worktree list` → match a worktree whose checked-out branch contains `<n>-`.
+- If found AND the issue Status == In Progress:
+  - AskUserQuestion: "Issue #<n> has an active worktree at `<path>` on `<branch>`. Resume / new-worktree / abort?"
+  - **Resume:** `cd <path>`; go to STEP 2.6.
+  - **New-worktree:** create a fresh worktree (`superpowers:using-git-worktrees`) on a new branch off `main`; go to STEP 2.8.
+  - **Abort:** stop the skill cleanly.
+- Else (no worktree): create a worktree via `superpowers:using-git-worktrees` on `feature/<n>-<slug>` (or `fix/`) off `main`.
 
-## STEP 2.5: Resume vs new-worktree decision + stale-handoff guard + sibling-contention scan
+## STEP 2.6: Stale-handoff guard
 
-Now that a task is identified (in STEP 2) and its status flipped to `in-progress`, check for an existing session on this tasker.
+Read the latest handoff comment on the issue (sentinel `<!-- handoff -->`):
+```
+gh issue view <n> --repo Innovation-Philosophy/Lisi-Core --json comments \
+  --jq '[.comments[] | select(.body|test("<!-- handoff -->"))] | last'
+```
+If its `updatedAt` is more than 7 days ago, print the whole comment and AskUserQuestion "Handoff is <N> days old. Proceed?". On "no", abort cleanly. If within 7 days (or none exists), read it silently into context.
 
-2.5a. Read the task fields via `mcp__tasker__tasker_get`. Look at `currentWorktree`, `currentBranch`, `handoffPath`, `lastSessionEndedAt`, `lastSessionTerminal`.
+## STEP 2.7: Sibling-worktree contention scan
 
-2.5b. **Resume-vs-new decision.** If `currentWorktree` is set AND the path exists on disk:
-- Use AskUserQuestion: "Tasker #<id> has an active session at `<currentWorktree>` on branch `<currentBranch>` (last touched <lastSessionEndedAt> by <lastSessionTerminal>). Resume / new-worktree / abort?"
-- **Resume:** `cd <currentWorktree>`. Skip to STEP 2.5d.
-- **New-worktree:** create a fresh worktree (use `superpowers:using-git-worktrees`), then call `mcp__tasker__tasker_update` setting `currentWorktree`, `currentBranch` to the new values and `handoffPath: null` (will be re-set at next /team-stop or /team-checkpoint). Skip to STEP 3.
-- **Abort:** stop the skill cleanly. Do NOT call `tasker_ai_start`.
+```
+gh project item-list 5 --owner Innovation-Philosophy --format json --limit 400
+```
+For each item with Status == "In Progress" and number != `<n>`: read its handoff comment, extract the bullets under `## Files I'm touching`. Compare the union to this session's planned scope (from the issue body, a linked plan, or — if neither — ask the user "What files do you expect to touch?"). On overlap, print one warning block per colliding sibling, then AskUserQuestion "Sibling contention detected. Proceed / coordinate-first / abort?". On "abort", stop cleanly.
 
-2.5c. **No existing session.** If `currentWorktree` is NOT set OR the path does not exist on disk:
-- Create a fresh worktree per `superpowers:using-git-worktrees`.
-- Call `mcp__tasker__tasker_update` setting `currentWorktree: <new abs path>`, `currentBranch: <branch name>`.
+## STEP 2.8: Claim the issue
 
-2.5d. **Stale-handoff guard** (7-day threshold; configurable via `.tasker/config.json` `staleHandoffDays`, default 7):
-- If `lastSessionEndedAt` is set AND is older than the threshold from now:
-  - Read `<handoffPath>` fully if it exists.
-  - Print the entire HANDOFF contents to the user, then use AskUserQuestion: "Handoff is <N> days old. I've read it. Proceed?"
-  - On "no" or no response, abort the skill cleanly.
-- If `lastSessionEndedAt` is within the threshold OR not set:
-  - If `handoffPath` is set, read it silently (the Claude instance now has it in context for the rest of the session).
+1. Set the issue's board Status → **In Progress**: find its project item id, then
+   ```
+   gh project item-edit --project-id PVT_kwDOCa5KQM4BZN-K --id <itemId> \
+     --field-id PVTSSF_lADOCa5KQM4BZN-KzhUOPWE --single-select-option-id 47fc9ee4
+   ```
+2. Refresh the parent epic's `active-sessions` block: regenerate it from the board (list the epic's In-Progress sub-issues with their branch + last-touched), rewriting the text between `<!-- active-sessions -->` and `<!-- /active-sessions -->` via `gh issue edit <epic#> --body-file <file>`.
 
-2.5e. **Sibling-worktree contention scan:**
-- Call `mcp__tasker__tasker_list` (status: "in-progress").
-- For each task != the one being started AND with a non-null `handoffPath`:
-  - Read the file; extract the `## Files I'm touching` section (lines between that heading and the next `##` heading).
-  - Collect all listed file paths.
-- Compare the union of those paths to the planned scope of THIS session (from the task's `notes`, the linked `plan.md`, or — if neither exists — ask the user "What files do you expect to touch this session?").
-- If overlap exists:
-  - Print a warning block: "⚠ Sibling session on tasker #<sib-id> in `<sib-worktree>` is also editing: <overlapping files>". One warning block per colliding sibling.
-  - Use AskUserQuestion: "Sibling-worktree contention detected. Proceed / coordinate-first / abort?"
-  - On "abort", stop the skill cleanly.
-- If no overlap: continue silently.
+There is NO time tracking — do not start any timer.
 
 ## STEP 3: Read state files
 
-Read these files now:
-- `_architecture/PLATFORM-STATE.md`
-- `_architecture/CROSS-CUTTING-DECISIONS.md`
-- All files in `_architecture/escalations/`
-- Any existing plan documents in the project (check `docs/` or project root)
+Read now: `_architecture/PLATFORM-STATE.md`, `_architecture/CROSS-CUTTING-DECISIONS.md`, all files in `_architecture/escalations/`, and any existing plan documents (check `docs/` or project root, and `_architecture/artifacts/<n>/`).
 
 ## STEP 3.5: Classify task complexity (Scale-Adaptive Ceremony)
 
-Auto-detect task complexity to right-size the workflow. Check for user overrides first:
-- `/team-start --quick` → Force **Trivial**
-- `/team-start --full` → Force **Complex**
-- `/team-start --level {trivial|simple|standard|complex}` → Force specific level
+Check for overrides: `--quick` → Trivial; `--full` → Complex; `--level {trivial|simple|standard|complex}` → that level.
 
-If no override, auto-classify based on:
+If no override, auto-classify (Trivial: typo/bump/config, 1 file; Simple: small bug/feature, 1 service; Standard: feature/integration/refactor, 1-2 services; Complex: migrate/new-service/multi-service/architecture, 3+ services).
 
-| Signal | Trivial | Simple | Standard | Complex |
-|--------|---------|--------|----------|---------|
-| Keywords in task | typo, bump, config, rename | bug fix, small feature, patch | feature, integration, refactor | migrate, new service, multi-service, architecture |
-| Services affected | 1 file | 1 service | 1-2 services | 3+ services |
-| Estimated scope | 1-3 files | 3-10 files | 10-20 files | 20+ files |
-| Has subtasks | No | Maybe | Yes | Yes, with dependencies |
+Persist the level: create `_architecture/artifacts/<n>/` and write `complexity.txt` containing just `trivial|simple|standard|complex`.
 
-### Write complexity artifact
+Workflow per level:
+- **Trivial** — direct fix → commit → push → done. Skip to POST-IMPLEMENTATION.
+- **Simple** — light brainstorming; 1 teammate max; review = code reviewer only.
+- **Standard** — full brainstorming → plan → team → review-cycle (all 6 agents).
+- **Complex** — `/prfaq` first → full brainstorming → plan → `/ready-check` → team → review-cycle → `/retro` after.
 
-After classifying, persist the complexity level so the enforcement hook can read it:
-1. Create `_architecture/artifacts/{task-id}/` if it doesn't exist
-2. Write `_architecture/artifacts/{task-id}/complexity.txt` containing just the level: `trivial`, `simple`, `standard`, or `complex`
+Report: "Task classified as **{level}**. Adjusting workflow accordingly."
 
-### Workflow per complexity level:
+## STEP 4: Research phase (if the issue is vague)
 
-**Trivial** — Direct fix, no ceremony:
-- Skip brainstorming, skip team spawn, skip review-cycle
-- Direct fix → commit → push → done
-- Skip to STEP POST-IMPLEMENTATION (just commit and update tasker)
+A task is clear enough if you know the affected service(s), expected behavior, and where to look. If it's just a symptom/one-liner, it's vague.
 
-**Simple** — Light ceremony:
-- Light brainstorming (confirm approach, skip Socratic exploration)
-- 1 teammate max
-- Abbreviated review: code reviewer only (skip domain/build/adversarial/edge-case)
+If vague: investigate with Explore agents (Trivial/Simple) or named research agents in parallel (Standard/Complex) — Analyst, Architect, and (Complex only) Domain Expert. Synthesize findings, report to the user (root-cause hypothesis, affected services, proposed approach), and ask "Does this look right? Should I proceed?" before STEP 5. Save findings to `_architecture/artifacts/<n>/research.md`.
 
-**Standard** — Full current flow:
-- Full brainstorming → plan → team → review-cycle (all 6 agents)
+## STEP 4.5: PRFAQ exercise (Complex or `--prfaq` only)
 
-**Complex** — Full flow + extras:
-- PRFAQ exercise first (invoke `/prfaq` skill if available)
-- Named research agents (Step 4)
-- Full brainstorming → plan → readiness gate (`/ready-check`) → team → review-cycle (all 6 agents)
-- Retro after completion (`/retro`)
-
-Report the classification to the user: "Task classified as **{level}**. Adjusting workflow accordingly."
-
-## STEP 4: Research phase (if task is vague)
-
-Evaluate whether the task has enough detail to immediately start implementation. A task is **clear enough** if you know:
-- Which service(s) are affected
-- What the expected behavior should be
-- Where in the code to look
-
-A task is **too vague** if it's just a symptom or a one-liner without context (e.g., "X doesn't work", "user can't see Y").
-
-**If the task is clear enough:** skip to Step 5.
-
-**If the task is vague:**
-
-1. **Investigate the problem** using role-specific research agents based on complexity:
-
-   **Trivial/Simple tasks:** Research directly — use Explore agents to search codebase, read files, check git history. No role specialization needed.
-
-   **Standard/Complex tasks:** Spawn named research agents in parallel for focused investigation:
-
-   - **Analyst Agent** (general-purpose): "You are a requirements analyst. For this task: '{task description}'. Determine: What is the user trying to achieve? What are the acceptance criteria? What does 'done' look like? What are the explicit and implicit requirements? Search the codebase for related features, read relevant docs, and report your findings."
-
-   - **Architect Agent** (general-purpose): "You are a technical architect. For this task: '{task description}'. Determine: What services/modules are affected? What's the best technical approach? What patterns does this codebase already use for similar problems? What are the technical risks? Search the codebase for existing patterns, read service configs, and report your findings."
-
-   - **Domain Expert Agent** (general-purpose, Complex tasks only): "You are a domain expert. For this task: '{task description}'. Determine: What business rules apply? What edge cases matter based on the domain? What has gone wrong in this area before? Check git history for related bugs/fixes, read domain-specific code, and report your findings."
-
-   Synthesize findings from all research agents into a unified picture.
-
-2. **Report findings to the user:**
-   - Root cause hypothesis (or multiple candidates)
-   - Which services need changes
-   - Proposed approach
-   - Research agent findings summary
-   - Ask: "Does this look right? Should I proceed?"
-
-3. **Wait for user confirmation** before moving to Step 5. The user may have additional context.
-
-Note: Time is already being tracked from Step 2. Research is billable work.
-
-## STEP 4.5: PRFAQ exercise (Complex tasks or --prfaq flag only)
-
-If the task is classified as **Complex** or the user passed `--prfaq`:
-1. Invoke the `/prfaq` skill if it exists
-2. The PRFAQ output provides customer-first context for the brainstorming phase
-3. If `/prfaq` skill doesn't exist, ask the 3 lightweight questions inline:
-   - Who benefits from this change?
-   - What changes for them?
-   - Why now?
-
-Skip this step for Trivial, Simple, and Standard tasks (unless --prfaq flag).
-
-## STEP 4.7: Create artifact directory
-
-If this task has a task ID (from Tasker or TaskCreate):
-1. Create `_architecture/artifacts/{task-id}/` directory (may already exist from Step 3.5)
-2. If research was done (Step 4), save research findings as `_architecture/artifacts/{task-id}/research.md`
-3. If PRFAQ was done (Step 4.5), it will have saved its own artifact
-
-This directory will be used by subsequent phases (brainstorming, planning, review-cycle, retro) to build the artifact chain.
+Invoke `/prfaq` if it exists; otherwise ask inline: who benefits, what changes, why now. Skip for Trivial/Simple/Standard unless `--prfaq`.
 
 ## STEP 5: Create branch and team
 
-1. Derive a branch slug from the task title
-2. Create or checkout the feature branch from `main`:
-   - If branch exists: checkout and pull
-   - If new: `git checkout -b feature/{slug} main` or `git checkout -b fix/{slug} main`
-3. Call TeamCreate with a team name derived from the project directory name (or task slug). Use agent_type "architect".
+1. The feature branch was created in STEP 2.5 (`feature/<n>-<slug>` off `main`). If resuming, it already exists — checkout and pull.
+2. Call `TeamCreate` with a team name derived from the issue slug. Use agent_type "architect".
 
 ## STEP 6: Spawn teammates and create tasks
 
-1. **Load discovered agents:** Read all agent definitions from `_architecture/agents/*.md` (skip `.fingerprint`)
-2. **Select relevant agents:** Based on the task's affected services/directories, select the agents whose `service:` field matches
-3. **Spawn teammates:** For each selected agent:
-   - Use `general-purpose` subagent_type
-   - Set `name` to the agent's `name` field (e.g., "pylon-dev")
-   - Include the full agent definition content in the prompt as context
-   - Set `team_name` to the current team
-4. **Create tasks:** Using TaskCreate, create tasks with clear descriptions, definitions of done, dependencies, and owners assigned to the spawned agents
+1. Read all agent definitions from `_architecture/agents/*.md` (skip `.fingerprint`).
+2. Select agents whose `service:` field matches the issue's affected services/directories.
+3. Spawn each as a `general-purpose` teammate (`name` = the agent's name, full definition in the prompt, `team_name` = current team).
+4. Create in-session tasks via TaskCreate with clear definitions of done, dependencies, and owners.
 
-If no discovered agents exist (discovery was skipped or failed), fall back to spawning generic `general-purpose` agents with service-specific context from CLAUDE.md.
+For frontend tasks affecting visible UI, include: "You MUST self-verify with Playwright MCP" and "You MUST use the frontend-design skill for new components/redesigns."
 
-For frontend tasks that affect visible UI, include in the description:
-- "You MUST self-verify with Playwright MCP after implementation"
-- "You MUST use the frontend-design skill for any new components or redesigns"
+If no discovered agents exist, fall back to `general-purpose` agents with service context from CLAUDE.md.
 
 ## STEP 7: Confirm to the user
 
-Report: task being worked on, feature branch, team composition, task assignments.
+Report: the issue being worked (number + title + epic), feature branch, team composition, task assignments.
 
-## PRE-IMPLEMENTATION: Readiness Gate (Standard and Complex tasks only)
+## PRE-IMPLEMENTATION: Readiness Gate (Standard and Complex only)
 
-After brainstorming and planning are complete, but BEFORE spawning implementation teammates:
-
-1. If task complexity is **Standard** or **Complex**: invoke `/ready-check` skill
-2. If verdict is **PASS**: proceed to implementation
-3. If verdict is **CONCERNS**: present concerns to user, ask whether to proceed or address first
-4. If verdict is **FAIL**: stop. Fix the planning gaps before implementation begins.
-
-Skip this gate for Trivial and Simple tasks.
+After brainstorming + planning, before spawning implementation teammates: invoke `/ready-check`. PASS → proceed. CONCERNS → present, ask whether to proceed or fix first. FAIL → stop and fix planning gaps. Skip for Trivial/Simple.
 
 ## POST-IMPLEMENTATION — MANDATORY REVIEW GATE
 
 When all implementation tasks are complete:
-1. Commit and push all work to the feature branch
-
+1. Commit and push all work to the feature branch.
 2. **Run review based on complexity (DO NOT SKIP):**
-   - **Trivial**: no review required
-   - **Simple**: spawn a code reviewer agent, wait for report, save as `_architecture/artifacts/{task-id}/review-report-iteration-1.md`
-   - **Standard/Complex**: invoke `/team-review-cycle` — full 6-agent review with fix loops
-
-   The enforcement hook WILL BLOCK `gh pr create` if no review report exists for Standard/Complex tasks.
-   DO NOT rationalize skipping review ("it's just tests", "it's obvious", "it's a small change").
-
-3. When review passes, create PR from feature branch -> main
-4. Update tasker task with PR link and mark as done
-5. **If task was Complex or 3+ tasks were completed:** prompt user for retrospective — "Significant work completed. Run `/retro` to capture lessons learned?"
-6. Report to user for manual verification
+   - **Trivial**: no review.
+   - **Simple**: spawn a code reviewer agent, save report to `_architecture/artifacts/<n>/review-report-iteration-1.md`.
+   - **Standard/Complex**: invoke `/team-review-cycle` (full 6-agent review with fix loops).
+   The enforcement hook WILL BLOCK `gh pr create` if no review report exists for Standard/Complex. Do not rationalize skipping.
+3. When review passes, create the PR from the feature branch → main. Put `Closes #<n>` in the PR body so merge auto-closes the issue. Follow the Stakeholder Summary template in CLAUDE.md.
+4. The issue's Status moves to Done at `/team-stop` (or when the PR merges and closes it).
+5. If Complex or 3+ tasks completed: prompt "Significant work completed. Run `/retro`?".
+6. Report to the user for manual verification.

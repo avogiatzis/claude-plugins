@@ -1,70 +1,66 @@
 ---
 name: team-stop
-description: Gracefully end a team session — write per-tasker HANDOFF.md, update tasker session fields, shutdown team, close tasker tracking.
+description: Gracefully end a team session — upsert per-issue handoff comments on GitHub, set Done/close on finished issues, shutdown team. No tasker, no time tracking.
 ---
 
 Execute all of the following steps immediately. Do not ask for confirmation.
 
-STEP 1: Send a checkpoint message to all active teammates:
-"Checkpoint now — session ending. Commit all work, update PROGRESS.md, run tests, message me when done."
+**Tracking is on GitHub** (Issues + Project #5). Tasker is RETIRED — do not call any `mcp__tasker__*` tool. There is no time tracking.
 
-STEP 2: Wait for all teammates to confirm checkpoint complete.
+**Canonical IDs:** repo `Innovation-Philosophy/Lisi-Core`, project `5` / `PVT_kwDOCa5KQM4BZN-K`, Status field `PVTSSF_lADOCa5KQM4BZN-KzhUOPWE` → Todo `f75ad846`, In Progress `47fc9ee4`, Done `98236657`.
 
-STEP 3: Update `_architecture/PLATFORM-STATE.md` with the final state of all services, incorporating teammate reports.
+## STEP 1: Checkpoint all teammates
 
-STEP 4: Write per-tasker handoff.
+Send to all active teammates: "Checkpoint now — session ending. Commit all work, update PROGRESS.md, run tests, message me when done."
 
-For each tasker task that was worked on this session (the focused one + any others touched):
+## STEP 2: Wait for all teammates to confirm checkpoint complete.
 
-4a. If `tasker_get` shows `status === "done"`:
-- Clear session fields via `mcp__tasker__tasker_update`: set `currentWorktree: null`, `currentBranch: null`, `handoffPath: null`, `lastSessionEndedAt: null`, `lastSessionTerminal: null`.
-- Leave any existing `_architecture/artifacts/<id>/HANDOFF.md` in place as a historical record (it joins `retro.md` as a lifecycle artifact). Do NOT delete it.
-- Skip to STEP 5.
+## STEP 3: Update `_architecture/PLATFORM-STATE.md` with the final state of all services, incorporating teammate reports.
 
-4b. Otherwise (in-progress or paused):
-- Write or update `_architecture/artifacts/<id>/HANDOFF.md` from session state. Required sections, in order:
-  - Header: `# Handoff — Tasker #<id>: <title>`
-  - `**Last session ended:** <ISO timestamp with timezone> (terminal: <basename of $PWD>)`
-  - `**Worktree:** <absolute path>`
-  - `**Branch:** <branch> (tracking <upstream> @ <upstream sha>)`
-  - `**Tip:** <local HEAD sha> — clean | uncommitted: <NONE | <count>>`
-  - `**PR:** <PR# (state)> — <URL>` (or `none`)
-  - `## Next action (one imperative sentence)` — one literal imperative sentence
-  - `## Blockers / decisions awaiting human` — bullet list, or `- none`
-  - `## Files I'm touching (sibling-contention guard)` — bullet list of file paths relative to the sub-repo or workspace root
-  - `## Pre-flight sanity (run before resuming)` — fenced bash block of commands
-  - `## Anchors (don't re-narrate — just open)` — bullet list of file paths
-  - `## NOT for this session` — bullet list, or `- (none)`
-- Call `mcp__tasker__tasker_update` setting: `handoffPath: "_architecture/artifacts/<id>/HANDOFF.md"`, `lastSessionEndedAt: <ISO now>`, `lastSessionTerminal: <basename of $PWD>`. Do NOT touch `currentWorktree` or `currentBranch` here — those were set at `/team-start` and remain stable.
+## STEP 4: Upsert a handoff comment per touched issue
 
-STEP 5: Prompt for retrospective (if significant work was done).
+For each GitHub issue worked on this session (the focused one + any others touched):
 
-Check if significant work was completed this session:
-- 3 or more tasks completed, OR
-- Task was classified as Complex, OR
-- Review cycle required 2+ iterations (indicating rework)
+4a. Build the handoff body. First line MUST be the sentinel `<!-- handoff -->`. Then these sections, in order:
+- `**Last session ended:** <ISO timestamp with timezone> (terminal: <basename of $PWD>)`
+- `**Worktree:** <absolute path>` _(informational only — resume re-derives via `git worktree list`)_
+- `**Branch:** <branch> (tracking <upstream> @ <upstream sha>)`
+- `**Tip:** <local HEAD sha> — clean | uncommitted: <NONE | count>`
+- `**PR:** <PR# (state)> — <URL>` (or `none`)
+- `## Next action (one imperative sentence)`
+- `## Blockers / decisions awaiting human` — bullets, or `- none`
+- `## Files I'm touching (sibling-contention guard)` — file paths relative to the sub-repo / workspace root
+- `## Pre-flight sanity (run before resuming)` — fenced bash block
+- `## Anchors (don't re-narrate — just open)` — file paths
+- `## NOT for this session` — bullets, or `- (none)`
 
-If significant work was done:
-- Ask the user: "Significant work completed this session. Run `/retro` to capture lessons learned? (y/n)"
-- If yes: invoke the `/retro` skill before proceeding to shutdown
-- If no or user declines: proceed to shutdown
+4b. Upsert (never blindly append a duplicate). Find an existing handoff comment id:
+```
+gh issue view <n> --repo Innovation-Philosophy/Lisi-Core --json comments \
+  --jq '[.comments[] | select(.body|test("<!-- handoff -->"))] | last.id'
+```
+- If a comment id is found: `gh api --method PATCH repos/Innovation-Philosophy/Lisi-Core/issues/comments/<cid> --field body=@<bodyfile>`
+- Else: `gh issue comment <n> --repo Innovation-Philosophy/Lisi-Core --body-file <bodyfile>`
 
-STEP 6: Send shutdown requests to all teammates. Wait for shutdown confirmations.
+4c. **If the task is DONE** (PR merged or work complete):
+- Set board Status → Done: `gh project item-edit --project-id PVT_kwDOCa5KQM4BZN-K --id <itemId> --field-id PVTSSF_lADOCa5KQM4BZN-KzhUOPWE --single-select-option-id 98236657`
+- Close the issue: `gh issue close <n> --repo Innovation-Philosophy/Lisi-Core` (a merged PR with `Closes #<n>` may already have).
+- Remove it from the parent epic's `active-sessions` block (regenerate the block from the board between the `<!-- active-sessions -->` sentinels via `gh issue edit <epic#> --body-file`).
 
-STEP 7: Call TeamDelete to clean up the team.
+4d. **Otherwise (in-progress/paused):** leave Status = In Progress and refresh the parent epic's `active-sessions` block so it still lists this issue with its branch + last-touched.
 
-STEP 8: Close ALL active AI sessions (not just the current one).
+## STEP 5: Prompt for retrospective (if significant work was done)
 
-`tasker_ai_stop` closes one active session per call (FIFO — oldest first), so sessions left open by prior mid-session `team-start` or orchestration glitches accumulate bogus duration otherwise:
+Significant = 3+ issues closed this session, OR the task was Complex, OR the review cycle took 2+ iterations. If significant: ask "Significant work completed. Run `/retro`? (y/n)". On yes, invoke `/retro` before shutdown.
 
-1. Call `mcp__tasker__tasker_time_list` and count entries where the `end` field is absent — these are active sessions.
-2. For each active session (cap loop at 10 iterations as a safety bound), call `mcp__tasker__tasker_ai_stop` with a description that includes the current task's outcome summary, plus — if the entry's `taskId` differs from the current task — a note that it is being force-closed because it was a leaked prior session.
-3. After the loop, call `mcp__tasker__tasker_time_list` once more and verify no entries are missing `end`. If any remain, report the leak to the user explicitly.
-4. Report the total count of sessions closed (usually 1; more indicates prior leakage that has now been cleaned up).
+## STEP 6: Send shutdown requests to all teammates. Wait for shutdown confirmations.
 
-STEP 9: Confirm to the user that the session is cleanly closed. Include:
-- Tasks completed this session
-- Time tracked this session (from tasker_hours)
-- Current tasker task board summary
-- Branch/PR status
-- HANDOFF.md path(s) written this session
+## STEP 7: Call `TeamDelete` to clean up the team.
+
+## STEP 8: Confirm clean closure to the user
+
+Report (all from GitHub — no tasker, no time tracked):
+- Issues closed this session: `gh issue list --repo Innovation-Philosophy/Lisi-Core --state closed --search "closed:>=<session-start-date>" --json number,title`
+- Current board summary: `gh project item-list 5 --owner Innovation-Philosophy --format json` grouped by Status.
+- Branch / PR status for the work.
+- Links to the handoff comment(s) written this session.
