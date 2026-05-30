@@ -28,9 +28,10 @@ Collect data from multiple sources (run in parallel where possible):
 - Read all files in `_architecture/escalations/` related to this work
 - Note: what was escalated, was it resolved, how long did resolution take
 
-### Time Tracking (if Tasker MCP available)
-- Call `mcp__tasker__tasker_hours` with period "today" or relevant period
-- Note: total time, breakdown by phase (research vs implementation vs review)
+### Session Throughput (GitHub)
+- Tasker is RETIRED — there is no time tracking. Gauge effort from GitHub instead.
+- Issues closed this session: `gh issue list --repo Innovation-Philosophy/Lisi-Core --state closed --search "closed:>=<session-start-date>" --json number,title`
+- Commit volume / rework on the feature branch (from the git audit above): commits, reverts, fixups.
 
 ### Task Completion
 - Check TaskList for completed/incomplete tasks
