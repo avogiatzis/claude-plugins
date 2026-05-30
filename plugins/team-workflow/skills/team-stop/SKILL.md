@@ -34,13 +34,15 @@ For each GitHub issue worked on this session (the focused one + any others touch
 - `## Anchors (don't re-narrate — just open)` — file paths
 - `## NOT for this session` — bullets, or `- (none)`
 
-4b. Upsert (never blindly append a duplicate). Find an existing handoff comment id:
+4b. Upsert (never blindly append a duplicate). Find an existing handoff comment's URL:
 ```
 gh issue view <n> --repo Innovation-Philosophy/Lisi-Core --json comments \
-  --jq '[.comments[] | select(.body|test("<!-- handoff -->"))] | last.id'
+  --jq '[.comments[] | select(.body|test("<!-- handoff -->"))] | last.url'
 ```
-- If a comment id is found: `gh api --method PATCH repos/Innovation-Philosophy/Lisi-Core/issues/comments/<cid> --field body=@<bodyfile>`
-- Else: `gh issue comment <n> --repo Innovation-Philosophy/Lisi-Core --body-file <bodyfile>`
+- If a URL is returned: extract the numeric comment id from its `#issuecomment-<id>` suffix, then
+  `gh api --method PATCH repos/Innovation-Philosophy/Lisi-Core/issues/comments/<id> --field body=@<bodyfile>`.
+  **The REST comments endpoint needs the numeric database id** — the `.id` field from `--json comments` is a GraphQL node id (`IC_…`) and will 404 against REST.
+- Else (no URL): `gh issue comment <n> --repo Innovation-Philosophy/Lisi-Core --body-file <bodyfile>`
 
 4c. **If the task is DONE** (PR merged or work complete):
 - Set board Status → Done: `gh project item-edit --project-id PVT_kwDOCa5KQM4BZN-K --id <itemId> --field-id PVTSSF_lADOCa5KQM4BZN-KzhUOPWE --single-select-option-id 98236657`
